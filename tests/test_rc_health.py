@@ -6,7 +6,7 @@ import socket
 import urllib.error
 from pathlib import Path
 from typing import NamedTuple, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -451,3 +451,72 @@ def test_print_doctor_report_fail(capsys: pytest.CaptureFixture[str]) -> None:
     assert "❌" in out
     assert "⚠️" in out
     assert "Result: FAIL (1 errors, 1 warnings)" in out
+
+
+def test_check_docker_runtime_unreachable() -> None:
+    mock_config = MagicMock()
+    with patch(
+        "researchclaw.experiment.docker_sandbox.DockerSandbox.check_docker_available",
+        return_value=False,
+    ):
+        result = health.check_docker_runtime(mock_config)
+    assert result.status == "fail"
+    assert "not reachable" in result.detail
+
+
+def test_check_docker_runtime_missing_image() -> None:
+    mock_config = MagicMock()
+    mock_config.experiment.docker.image = "rc-image"
+    with (
+        patch(
+            "researchclaw.experiment.docker_sandbox.DockerSandbox.check_docker_available",
+            return_value=True,
+        ),
+        patch(
+            "researchclaw.experiment.docker_sandbox.DockerSandbox.ensure_image",
+            return_value=False,
+        ),
+    ):
+        result = health.check_docker_runtime(mock_config)
+    assert result.status == "fail"
+    assert "not found locally" in result.detail
+
+
+def test_check_docker_runtime_pass_no_gpu() -> None:
+    mock_config = MagicMock()
+    mock_config.experiment.docker.image = "rc-image"
+    mock_config.experiment.docker.gpu_enabled = False
+    with (
+        patch(
+            "researchclaw.experiment.docker_sandbox.DockerSandbox.check_docker_available",
+            return_value=True,
+        ),
+        patch(
+            "researchclaw.experiment.docker_sandbox.DockerSandbox.ensure_image",
+            return_value=True,
+        ),
+    ):
+        result = health.check_docker_runtime(mock_config)
+    assert result.status == "pass"
+    assert "Docker OK" in result.detail
+    assert "GPU" not in result.detail
+
+
+def test_check_docker_runtime_pass_gpu() -> None:
+    mock_config = MagicMock()
+    mock_config.experiment.docker.image = "rc-image"
+    mock_config.experiment.docker.gpu_enabled = True
+    with (
+        patch(
+            "researchclaw.experiment.docker_sandbox.DockerSandbox.check_docker_available",
+            return_value=True,
+        ),
+        patch(
+            "researchclaw.experiment.docker_sandbox.DockerSandbox.ensure_image",
+            return_value=True,
+        ),
+    ):
+        result = health.check_docker_runtime(mock_config)
+    assert result.status == "pass"
+    assert "Docker OK" in result.detail
+    assert "GPU passthrough enabled" in result.detail
