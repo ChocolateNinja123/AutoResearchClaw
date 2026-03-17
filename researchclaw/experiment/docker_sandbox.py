@@ -80,6 +80,8 @@ _IMPORT_TO_PIP = {
     "optuna": "optuna",
 }
 
+_IMPORT_RE = re.compile(r"^\s*(?:import|from)\s+([\w.]+)", re.MULTILINE)
+
 
 class DockerSandbox:
     """Execute experiment code inside a Docker container.
@@ -474,15 +476,12 @@ class DockerSandbox:
     @staticmethod
     def _detect_pip_packages(staging_dir: Path) -> list[str]:
         """Scan Python files for import statements and return pip package names."""
-        import_re = re.compile(
-            r"^\s*(?:import|from)\s+([\w.]+)", re.MULTILINE
-        )
         detected: list[str] = []
         for pyf in staging_dir.glob("*.py"):
             if pyf.name == "setup.py":
                 continue  # Don't scan setup.py for experiment deps
             text = pyf.read_text(encoding="utf-8", errors="replace")
-            for m in import_re.finditer(text):
+            for m in _IMPORT_RE.finditer(text):
                 top_module = m.group(1).split(".")[0]
                 if top_module in _BUILTIN_PACKAGES:
                     continue
