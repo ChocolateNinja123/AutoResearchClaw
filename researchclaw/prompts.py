@@ -963,6 +963,24 @@ _DEFAULT_SUB_PROMPTS: dict[str, dict[str, Any]] = {
             "## All Project Files\n{all_files_ctx}"
         ),
     },
+    "alignment_check": {
+        "system": "You are a scientific code reviewer checking topic-experiment alignment.",
+        "user": (
+            "Research topic: {topic}\n\n"
+            "Experiment code:\n```python\n{code}\n```\n\n"
+            "TASK: Evaluate whether this experiment code actually tests the "
+            "stated research topic. Answer with JSON:\n"
+            '{"aligned": true/false, "reason": "...", "suggestions": "..."}\n\n'
+            "Check specifically:\n"
+            "- Does the code implement models/methods relevant to the topic?\n"
+            "- If the topic mentions LLMs/transformers/language models, does "
+            "the code use or simulate them (not just small MLPs)?\n"
+            "- If the topic mentions a specific technique (e.g. curriculum "
+            "learning, RLHF), does the code actually implement it?\n"
+            "- Are the experimental conditions meaningfully different from each other?\n"
+        ),
+        "json_mode": True,
+    },
     # ── Advanced Code Agent sub-prompts ──────────────────────────────────
     "architecture_planning": {
         "system": (

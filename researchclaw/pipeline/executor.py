@@ -2153,6 +2153,8 @@ def _execute_code_generation(
     max_repair = 3
     files: dict[str, str] = {}
     validation_log: list[str] = []
+    alignment_ok = True
+    alignment_note = ""
 
     # --- Detect available packages for sandbox ---
     _pm = prompts or PromptManager()
@@ -2457,6 +2459,67 @@ def _execute_code_generation(
                 resp.content[:300],
             )
 
+    # --- FIX-3: Topic-experiment alignment check ---
+    if llm is not None and files:
+        # Concatenate all code for alignment check
+        all_code_for_check = "\n\n".join(
+            f"# --- {fname} ---\n{code}" for fname, code in files.items()
+        )
+        # Truncate to avoid token overflow
+        if len(all_code_for_check) > 12000:
+            all_code_for_check = all_code_for_check[:12000] + "\n... [truncated]"
+
+        try:
+            ap = _pm.sub_prompt(
+                "alignment_check",
+                topic=config.research.topic,
+                code=all_code_for_check,
+            )
+            align_resp = _chat_with_prompt(
+                llm,
+                system=ap.system,
+                user=ap.user,
+                json_mode=True,
+                max_tokens=1024,
+            )
+            align_data = _safe_json_loads(align_resp.content, {})
+            if isinstance(align_data, dict) and not align_data.get("aligned", True):
+                alignment_ok = False
+                alignment_note = align_data.get("reason", "Misaligned")
+                suggestions = align_data.get("suggestions", "")
+                logger.warning(
+                    "Stage 10: Topic-experiment MISALIGNMENT detected: %s",
+                    alignment_note,
+                )
+                # Attempt one regeneration with explicit alignment instruction
+                regen_prompt = (
+                    f"The experiment code you previously generated does NOT align "
+                    f"with the research topic.\n\n"
+                    f"TOPIC: {config.research.topic}\n"
+                    f"MISALIGNMENT: {alignment_note}\n"
+                    f"SUGGESTIONS: {suggestions}\n\n"
+                    f"REGENERATE the experiment code to DIRECTLY test the stated "
+                    f"topic. The code MUST implement the core technique described "
+                    f"in the topic, not a generic proxy.\n\n"
+                    f"{pkg_hint}\n{compute_budget}\n"
+                    f"PLAN:\n{exp_plan}\n\n"
+                    f"Return multiple files using ```filename:xxx.py format."
+                )
+                regen_resp = _chat_with_prompt(
+                    llm,
+                    system=_pm.system("code_generation"),
+                    user=regen_prompt,
+                    max_tokens=_code_max_tokens,
+                )
+                regen_files = _extract_multi_file_blocks(regen_resp.content)
+                if regen_files and "main.py" in regen_files:
+                    files = regen_files
+                    alignment_ok = True
+                    alignment_note = "Regenerated after alignment check"
+                    logger.info("Stage 10: Code regenerated after alignment fix")
+        except Exception as exc:
+            logger.debug("Alignment check failed: %s", exc)
+
     # --- Fallback: real gradient descent on a quadratic objective ---
     if not files:
         files = {
@@ -2732,76 +2795,6 @@ def _execute_code_generation(
         except Exception as exc:
             logger.debug("Code review failed: %s", exc)
 
-    # --- FIX-3: Topic-experiment alignment check ---
-    alignment_ok = True
-    alignment_note = ""
-    if llm is not None:
-        # Concatenate all code for alignment check
-        all_code_for_check = "\n\n".join(
-            f"# --- {fname} ---\n{code}" for fname, code in files.items()
-        )
-        # Truncate to avoid token overflow
-        if len(all_code_for_check) > 8000:
-            all_code_for_check = all_code_for_check[:8000] + "\n... [truncated]"
-        align_prompt = (
-            f"Research topic: {config.research.topic}\n\n"
-            f"Experiment code:\n```python\n{all_code_for_check}\n```\n\n"
-            "TASK: Evaluate whether this experiment code actually tests the "
-            "stated research topic. Answer with JSON:\n"
-            '{"aligned": true/false, "reason": "...", "suggestions": "..."}\n\n'
-            "Check specifically:\n"
-            "- Does the code implement models/methods relevant to the topic?\n"
-            "- If the topic mentions LLMs/transformers/language models, does "
-            "the code use or simulate them (not just small MLPs)?\n"
-            "- If the topic mentions a specific technique (e.g. curriculum "
-            "learning, RLHF), does the code actually implement it?\n"
-            "- Are the experimental conditions meaningfully different from each other?\n"
-        )
-        try:
-            align_resp = llm.chat(
-                [{"role": "user", "content": align_prompt}],
-                system="You are a scientific code reviewer checking topic-experiment alignment.",
-                max_tokens=1024,
-            )
-            align_data = _safe_json_loads(align_resp.content, {})
-            if isinstance(align_data, dict) and not align_data.get("aligned", True):
-                alignment_ok = False
-                alignment_note = align_data.get("reason", "Misaligned")
-                suggestions = align_data.get("suggestions", "")
-                logger.warning(
-                    "Stage 10: Topic-experiment MISALIGNMENT detected: %s",
-                    alignment_note,
-                )
-                # Attempt one regeneration with explicit alignment instruction
-                regen_prompt = (
-                    f"The experiment code you previously generated does NOT align "
-                    f"with the research topic.\n\n"
-                    f"TOPIC: {config.research.topic}\n"
-                    f"MISALIGNMENT: {alignment_note}\n"
-                    f"SUGGESTIONS: {suggestions}\n\n"
-                    f"REGENERATE the experiment code to DIRECTLY test the stated "
-                    f"topic. The code MUST implement the core technique described "
-                    f"in the topic, not a generic proxy.\n\n"
-                    f"{pkg_hint}\n{compute_budget}\n"
-                    f"PLAN:\n{exp_plan}\n\n"
-                    f"Return multiple files using ```filename:xxx.py format."
-                )
-                regen_resp = _chat_with_prompt(
-                    llm,
-                    system=_pm.system("code_generation"),
-                    user=regen_prompt,
-                    max_tokens=_code_max_tokens,
-                )
-                regen_files = _extract_multi_file_blocks(regen_resp.content)
-                if regen_files and "main.py" in regen_files:
-                    files = regen_files
-                    for fname, code in files.items():
-                        (exp_dir / fname).write_text(code, encoding="utf-8")
-                    alignment_ok = True
-                    alignment_note = "Regenerated after alignment check"
-                    logger.info("Stage 10: Code regenerated after alignment fix")
-        except Exception as exc:
-            logger.debug("Alignment check failed: %s", exc)
 
     # --- FIX-7: Ablation distinctness check ---
     main_code = files.get("main.py", "")
