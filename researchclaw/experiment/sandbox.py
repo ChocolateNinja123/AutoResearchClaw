@@ -33,6 +33,16 @@ _CONDITION_RATIO_PATTERN = re.compile(
     r"^condition=(\S+)\s+((?:\S+=\S+\s+)*)(\w[\w.]*)\s*:\s*(\d+)/(\d+)\s*$"
 )
 
+# PAIRED statistical comparison patterns
+_PAIRED_PATTERN = re.compile(
+    r"^PAIRED:\s+(\S+)\s+vs\s+(\S+)\s*(.*?)mean_diff=([+-]?\d+\.?\d*)"
+    r".*?std_diff=([+-]?\d+\.?\d*)"
+    r".*?t_stat=([+-]?\d+\.?\d*)"
+    r".*?p_value=([+-]?\d+\.?\d*)"
+)
+_REGIME_PATTERN = re.compile(r"regime=(\S+)")
+_CI95_PATTERN = re.compile(r"ci95=\(([^,]+),([^)]+)\)")
+
 
 def _to_text(value: str | bytes | None) -> str:
     if value is None:
@@ -116,14 +126,8 @@ def extract_paired_comparisons(stdout: str) -> list[dict[str, object]]:
     Returns a list of dicts with method, baseline, regime, and stats.
     """
     results: list[dict[str, object]] = []
-    pattern = re.compile(
-        r"^PAIRED:\s+(\S+)\s+vs\s+(\S+)\s*(.*?)mean_diff=([+-]?\d+\.?\d*)"
-        r".*?std_diff=([+-]?\d+\.?\d*)"
-        r".*?t_stat=([+-]?\d+\.?\d*)"
-        r".*?p_value=([+-]?\d+\.?\d*)"
-    )
     for line in stdout.splitlines():
-        m = pattern.match(line.strip())
+        m = _PAIRED_PATTERN.match(line.strip())
         if m:
             method, baseline, tags, mean_diff, std_diff, t_stat, p_value = m.groups()
             entry: dict[str, object] = {
@@ -135,11 +139,11 @@ def extract_paired_comparisons(stdout: str) -> list[dict[str, object]]:
                 "p_value": float(p_value),
             }
             # Extract regime if present
-            regime_m = re.search(r"regime=(\S+)", tags)
+            regime_m = _REGIME_PATTERN.search(tags)
             if regime_m:
                 entry["regime"] = regime_m.group(1)
             # Extract CI if present
-            ci_m = re.search(r"ci95=\(([^,]+),([^)]+)\)", line)
+            ci_m = _CI95_PATTERN.search(line)
             if ci_m:
                 entry["ci95_low"] = float(ci_m.group(1))
                 entry["ci95_high"] = float(ci_m.group(2))
