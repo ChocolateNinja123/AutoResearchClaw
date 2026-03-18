@@ -6235,12 +6235,13 @@ def _execute_export_publish(
 
         code_dir = stage_dir / "code"
         code_dir.mkdir(parents=True, exist_ok=True)
-        all_code_combined = ""
+        all_code_parts: list[str] = []
         code_file_names: list[str] = []
         for src in sorted(Path(exp_final_dir_path).glob("*.py")):
             (code_dir / src.name).write_bytes(src.read_bytes())
-            all_code_combined += src.read_text(encoding="utf-8") + "\n"
+            all_code_parts.append(src.read_text(encoding="utf-8"))
             code_file_names.append(src.name)
+        all_code_combined = "\n".join(all_code_parts) + "\n" if all_code_parts else ""
 
         # Detect dependencies from all files
         detected: set[str] = set()
