@@ -233,10 +233,16 @@ def generate_weekly_report(
 
     # Build report
     total_runs = len(runs_data)
-    total_stages = sum(r.get("stages_executed", 0) for r in runs_data)
-    total_done = sum(r.get("stages_done", 0) for r in runs_data)
-    total_failed = sum(r.get("stages_failed", 0) for r in runs_data)
-    total_blocked = sum(r.get("stages_blocked", 0) for r in runs_data)
+    total_stages = total_done = total_failed = total_blocked = 0
+    for r in runs_data:
+        if "stages_executed" in r:
+            total_stages += r["stages_executed"]
+        if "stages_done" in r:
+            total_done += r["stages_done"]
+        if "stages_failed" in r:
+            total_failed += r["stages_failed"]
+        if "stages_blocked" in r:
+            total_blocked += r["stages_blocked"]
 
     report_lines = [
         f"## Summary",
