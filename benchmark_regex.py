@@ -1,16 +1,24 @@
 import timeit
+from researchclaw.pipeline.executor import _extract_multi_file_blocks
 
-setup = """
-from researchclaw.experiment.sandbox import extract_paired_comparisons
+text = """
+Some text
+```filename:main.py
+import os
+print(os.environ)
+```
 
-stdout = '''PAIRED: method_A vs baseline_B regime=test mean_diff=1.0 std_diff=0.1 t_stat=2.0 p_value=0.05
-PAIRED: method_C vs baseline_D regime=train mean_diff=-0.5 std_diff=0.2 t_stat=-1.5 p_value=0.10
-''' * 10000
+```python
+filename:utils.py
+def hello():
+    pass
+```
 """
 
-stmt = """
-extract_paired_comparisons(stdout)
-"""
+def bench():
+    _extract_multi_file_blocks(text)
 
-time_taken = timeit.timeit(stmt, setup=setup, number=100)
-print(f"Time taken: {time_taken:.4f} seconds")
+if __name__ == "__main__":
+    n = 10000
+    t = timeit.timeit(bench, number=n)
+    print(f"Baseline: {t / n * 1000000:.2f} µs per call")

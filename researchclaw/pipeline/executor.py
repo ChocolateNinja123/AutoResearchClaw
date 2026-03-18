@@ -35,6 +35,30 @@ from researchclaw.experiment.validator import (
 
 logger = logging.getLogger(__name__)
 
+# R13-2: Multiple patterns to handle LLM format variations
+_LLM_FILE_PATTERNS = [
+    # Original: ```filename:xxx.py or ```python filename:xxx.py
+    re.compile(
+        r"```(?:python\s+)?filename:(\S+)\s*\n(.*?)```",
+        flags=re.DOTALL,
+    ),
+    # Variation: ``` filename:xxx.py (space after backticks)
+    re.compile(
+        r"```\s+filename:(\S+)\s*\n(.*?)```",
+        flags=re.DOTALL,
+    ),
+    # Variation: ```python\nfilename:xxx.py (filename on next line)
+    re.compile(
+        r"```(?:python)?\s*\nfilename:(\S+)\s*\n(.*?)```",
+        flags=re.DOTALL,
+    ),
+    # Variation: ```python\n# filename: xxx.py (comment marker)
+    re.compile(
+        r"```(?:python)?\s*\n#\s*(?:FILE|filename)\s*:\s*(\S+\.py)\s*\n(.*?)```",
+        flags=re.DOTALL,
+    ),
+]
+
 
 @dataclass(frozen=True)
 class StageResult:
@@ -794,32 +818,8 @@ def _extract_multi_file_blocks(content: str) -> dict[str, str]:
 
     Returns a dict mapping filename → code content.
     """
-    # R13-2: Multiple patterns to handle LLM format variations
-    patterns = [
-        # Original: ```filename:xxx.py or ```python filename:xxx.py
-        re.compile(
-            r"```(?:python\s+)?filename:(\S+)\s*\n(.*?)```",
-            flags=re.DOTALL,
-        ),
-        # Variation: ``` filename:xxx.py (space after backticks)
-        re.compile(
-            r"```\s+filename:(\S+)\s*\n(.*?)```",
-            flags=re.DOTALL,
-        ),
-        # Variation: ```python\nfilename:xxx.py (filename on next line)
-        re.compile(
-            r"```(?:python)?\s*\nfilename:(\S+)\s*\n(.*?)```",
-            flags=re.DOTALL,
-        ),
-        # Variation: ```python\n# filename: xxx.py (comment marker)
-        re.compile(
-            r"```(?:python)?\s*\n#\s*(?:FILE|filename)\s*:\s*(\S+\.py)\s*\n(.*?)```",
-            flags=re.DOTALL,
-        ),
-    ]
-
     matches: list[tuple[str, str]] = []
-    for pattern in patterns:
+    for pattern in _LLM_FILE_PATTERNS:
         matches = pattern.findall(content)
         if matches:
             break
