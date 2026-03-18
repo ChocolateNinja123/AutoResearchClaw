@@ -674,6 +674,57 @@ def check_class_quality(all_files: dict[str, str]) -> list[str]:
     return warnings
 
 
+class _VariableScopingVisitor(ast.NodeVisitor):
+    """Walk AST to detect variable scoping issues in functions."""
+
+    def __init__(self, fname: str) -> None:
+        self.fname = fname
+        self.warnings: list[str] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if_only_vars: dict[str, int] = {}
+        top_level_vars: set[str] = set()
+
+        # Step 1: Collect declarations
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.If):
+                _collect_if_only_assignments(child, if_only_vars)
+            elif isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                for target in _extract_assign_targets(child):
+                    top_level_vars.add(target)
+
+        # Step 2: For variables defined only in if-branches, scan the function body
+        # for usages after their definition.
+        vars_to_check = {
+            var_name: var_line
+            for var_name, var_line in if_only_vars.items()
+            if var_name not in top_level_vars
+        }
+
+        if vars_to_check:
+            for later_node in ast.walk(node):
+                if isinstance(later_node, ast.Name) and isinstance(later_node.ctx, ast.Load):
+                    var_name = later_node.id
+                    if var_name in vars_to_check:
+                        var_line = vars_to_check[var_name]
+                        if later_node.lineno > var_line:
+                            self.warnings.append(
+                                f"[{self.fname}:{var_line}] Variable '{var_name}' is assigned "
+                                f"only inside an if-branch but used at line "
+                                f"{later_node.lineno} — will cause UnboundLocalError "
+                                f"if the branch is not taken"
+                            )
+                            # Remove so we only warn once per variable
+                            del vars_to_check[var_name]
+                            if not vars_to_check:
+                                break
+
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.visit_FunctionDef(node)
+
+
 def check_variable_scoping(code: str, fname: str = "main.py") -> list[str]:
     """Detect common variable scoping bugs in experiment code.
 
@@ -687,39 +738,9 @@ def check_variable_scoping(code: str, fname: str = "main.py") -> list[str]:
     except SyntaxError:
         return warnings
 
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-
-        # Collect variables assigned only inside if/elif/else branches
-        if_only_vars: dict[str, int] = {}
-        top_level_vars: set[str] = set()
-
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.If):
-                _collect_if_only_assignments(child, if_only_vars)
-            elif isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
-                for target in _extract_assign_targets(child):
-                    top_level_vars.add(target)
-
-        # Check for variables used after the if block but only defined inside it
-        for var_name, var_line in if_only_vars.items():
-            if var_name not in top_level_vars:
-                # Check if this variable is used later in the function
-                for later_node in ast.walk(node):
-                    if (
-                        isinstance(later_node, ast.Name)
-                        and later_node.id == var_name
-                        and isinstance(later_node.ctx, ast.Load)
-                        and later_node.lineno > var_line
-                    ):
-                        warnings.append(
-                            f"[{fname}:{var_line}] Variable '{var_name}' is assigned "
-                            f"only inside an if-branch but used at line "
-                            f"{later_node.lineno} — will cause UnboundLocalError "
-                            f"if the branch is not taken"
-                        )
-                        break
+    visitor = _VariableScopingVisitor(fname)
+    visitor.visit(tree)
+    warnings.extend(visitor.warnings)
 
     return warnings
 
@@ -739,16 +760,21 @@ def _collect_if_only_assignments(
 def _extract_assign_targets(node: ast.AST) -> list[str]:
     """Extract variable names from assignment targets."""
     names: list[str] = []
+
+    def _extract_from_target(target: ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            names.append(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                _extract_from_target(elt)
+
     if isinstance(node, ast.Assign):
         for target in node.targets:
-            if isinstance(target, ast.Name):
-                names.append(target.id)
+            _extract_from_target(target)
     elif isinstance(node, ast.AugAssign):
-        if isinstance(node.target, ast.Name):
-            names.append(node.target.id)
+        _extract_from_target(node.target)
     elif isinstance(node, ast.AnnAssign):
-        if isinstance(node.target, ast.Name):
-            names.append(node.target.id)
+        _extract_from_target(node.target)
     return names
 
 
